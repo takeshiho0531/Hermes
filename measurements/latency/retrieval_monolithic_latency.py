@@ -97,13 +97,13 @@ def main():
 
     dataset = load_from_disk(args.dataset_path)
 
-    all_retrieved_texts = []  # shape: (num_queries, top_k)
-    for doc_ids in retrieved_indices:
+    retrieved_texts_dict = {}  # shape: (num_queries, top_k)
+    for i, doc_ids in enumerate(retrieved_indices):
         texts = [dataset[int(doc_id)]["raw"] for doc_id in doc_ids]
-        all_retrieved_texts.append(texts)
+        retrieved_texts_dict[str(i + 1)] = texts
 
     with open(os.path.join(retrieved_dir, "retrieved_texts.json"), "w") as f:
-        json.dump(all_retrieved_texts, f, indent=2)  
+        json.dump(retrieved_texts_dict, f, indent=2)  
 
     print(f"✅ Results saved to {profiling_dir, retrieved_dir}")
 
