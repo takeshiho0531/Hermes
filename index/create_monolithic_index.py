@@ -4,7 +4,7 @@ import math
 import numpy as np
 import faiss
 from tqdm import tqdm
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk 
 import os
 
 # Fixed number of vectors to add per batch.
@@ -70,15 +70,26 @@ def main():
     )
     args = parser.parse_args()
 
-    index_size = args.index_size.lower()
-    if index_size not in DATASET_MAPPING:
-        raise ValueError("Invalid index size. Choose one of: 100k, 100m, 899m")
-    
-    dataset_name = DATASET_MAPPING[index_size]
-    
-    # --- Load the Hugging Face Dataset ---
-    print(f"Loading Hugging Face dataset: {dataset_name} ...")
-    dataset = load_dataset(dataset_name, split="train", streaming=args.dataset_streaming)
+    index_size_or_path = args.index_size
+
+    if index_size_or_path.lower() in DATASET_MAPPING:
+        dataset_name = DATASET_MAPPING[index_size_or_path.lower()]
+        index_size = index_size_or_path.lower()
+    elif os.path.exists(index_size_or_path):
+        dataset_name = index_size_or_path
+        index_size = os.path.basename(index_size_or_path.rstrip("/"))
+    else:
+        raise ValueError("Invalid index size or path. Choose one of: 100k, 100m, 899m or a valid local dataset path")
+
+    if os.path.exists(dataset_name):
+        dataset = load_from_disk(dataset_name)
+    else:
+        dataset = load_dataset(
+            dataset_name,
+            split="train",
+            streaming=args.dataset_streaming,
+            cache_dir=args.dataset_cache_dir,
+        )
     
     # Check that the dataset contains the expected 'vector' column.
     if "vector" not in dataset.column_names:
