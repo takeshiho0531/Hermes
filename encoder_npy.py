@@ -65,6 +65,40 @@ def encode_dataset_questions(
     print(f"Saved {len(embeddings)} embeddings to: {save_path}")
     return save_path
 
+def encode_question(
+    model_name: str,
+    model_type: Literal["sentence_transformer", "huggingface"],
+    question: str,
+    save_dir: str = "queries",
+    save: bool = True,
+    rewriter_used: bool = True,
+    batch_size: int = 32,
+) -> Union[str, np.ndarray]:
+    if model_type == "sentence_transformer":
+        model = SentenceTransformer(model_name)
+
+    elif model_type == "huggingface":
+        raise NotImplementedError(
+            "model_type='huggingface' is not yet supported in this function."
+        )
+
+    embeddings = model.encode(
+        question, batch_size=batch_size, show_progress_bar=True
+    )
+    if embeddings.ndim == 1:
+        embeddings = embeddings[np.newaxis, :]  # shape: (1, 768)
+
+    if save:
+        os.makedirs(save_dir, exist_ok=True)
+        filename = "rewriter.npy" if rewriter_used else "no_rewriter.npy"
+        path = os.path.join(save_dir, filename)
+
+        np.save(path, embeddings)
+        print(f"Saved: {path}")
+        return path
+
+    return embeddings
+
 def main():
     args = parse_arguments()
 

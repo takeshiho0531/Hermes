@@ -7,6 +7,7 @@ import numpy as np
 import faiss
 from tqdm import tqdm
 from datasets import load_from_disk
+from typing import Optional
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="FAISS Query Benchmark")
@@ -48,16 +49,28 @@ def perform_queries(index, retrieved_docs, embeddings, batch_size, retrieved_dir
 
 def run_faiss_retrieval_benchmark(
     index_name: str,
-    query_embedding_path: str,
     nprobe_list: list[int],
     batch_size_list: list[int],
     retrieved_docs_list: list[int],
     num_threads_list: list[int],
     dataset_path: str,
-    output_dir: str = "data/"
+    output_dir: str = "data/",
+    query_embedding_path: Optional[str] = None,
+    use_direct_embeddings: bool = False,
+    embeddings: Optional[np.ndarray] = None,
 ) -> tuple[str, str]:
+
+    if use_direct_embeddings:
+        if embeddings is None:
+            raise ValueError("when `use_direct_embeddings=True`, you need `embeddings`")
+        query_base = "direct" 
+    else:
+        if query_embedding_path is None:
+            raise ValueError("when `use_direct_embeddings=False`, you need `query_embedding_path`")
+        query_base = os.path.splitext(os.path.basename(query_embedding_path))[0]
+        embeddings = np.load(query_embedding_path)
+
     index_base = os.path.splitext(os.path.basename(index_name))[0]
-    query_base = os.path.splitext(os.path.basename(query_embedding_path))[0]
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     profiling_dir = os.path.join(output_dir, "profiling")
     retrieved_dir = os.path.join(output_dir, "retrieved", f"{index_base}__{query_base}__{timestamp}")
@@ -71,7 +84,6 @@ def run_faiss_retrieval_benchmark(
 
     # Initially load the index with a dummy nprobe; it will be updated later in the loop.
     index = load_faiss_index(index_name, nprobe_list[0])
-    embeddings = np.load(query_embedding_path)
 
     dataset = load_from_disk(dataset_path)
     
@@ -126,6 +138,8 @@ def run_faiss_retrieval_benchmark(
     }
     with open(os.path.join(retrieved_dir, "retrieval_config.json"), "w") as f:
         json.dump(config_dict, f, indent=2)
+
+    return output_file, retrieved_dir
 
 
 
