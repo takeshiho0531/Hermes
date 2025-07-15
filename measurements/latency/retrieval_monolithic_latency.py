@@ -44,19 +44,23 @@ def perform_queries(index, retrieved_docs, embeddings, batch_size, retrieved_dir
     retrieved_indices = np.vstack(retrieved_indices)  # shape = (num_queries, retrieved_docs)
     print(f"Retrieved indices shape: {retrieved_indices.shape}")
 
-    os.makedirs(retrieved_dir, exist_ok=True)
-    np.save(os.path.join(retrieved_dir, "retrieved_doc_indices.npy"), retrieved_indices)
-
     return sum(query_times) / len(query_times) if query_times else 0, retrieved_indices
 
-def main():
-    args = parse_arguments()
-
-    index_base = os.path.splitext(os.path.basename(args.index_name))[0]
-    query_base = os.path.splitext(os.path.basename(args.queries))[0]
+def run_faiss_retrieval_benchmark(
+    index_name: str,
+    query_embedding_path: str,
+    nprobe_list: list[int],
+    batch_size_list: list[int],
+    retrieved_docs_list: list[int],
+    num_threads_list: list[int],
+    dataset_path: str,
+    output_dir: str = "data/"
+) -> tuple[str, str]:
+    index_base = os.path.splitext(os.path.basename(index_name))[0]
+    query_base = os.path.splitext(os.path.basename(query_embedding_path))[0]
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    profiling_dir = os.path.join(args.output_dir, "profiling")
-    retrieved_dir = os.path.join(args.output_dir, "retrieved", f"{index_base}__{query_base}__{timestamp}")
+    profiling_dir = os.path.join(output_dir, "profiling")
+    retrieved_dir = os.path.join(output_dir, "retrieved", f"{index_base}__{query_base}__{timestamp}")
     os.makedirs(profiling_dir, exist_ok=True)
     os.makedirs(retrieved_dir, exist_ok=True)
 
@@ -64,29 +68,40 @@ def main():
         profiling_dir, 
         f"retrieval_monolithic_latency__{index_base}__{query_base}__{timestamp}.csv"
     )
-    
+
     # Initially load the index with a dummy nprobe; it will be updated later in the loop.
-    index = load_faiss_index(args.index_name, args.nprobe[0])
-    embeddings = np.load(args.queries)
+    index = load_faiss_index(index_name, nprobe_list[0])
+    embeddings = np.load(query_embedding_path)
+
+    dataset = load_from_disk(dataset_path)
     
     with open(output_file, mode='w', newline='') as file:
         fieldnames = ["Index Name", "nprobe", "Batch Size", "Retrieved Docs", "Num Threads", "Avg Retrieval Time (s)"]
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
         
-        for nprobe in tqdm(args.nprobe, desc="nprobe values", position=0):
+        for nprobe in tqdm(nprobe_list, desc="nprobe values", position=0):
             index.nprobe = nprobe  # Update the index's nprobe
-            for batch_size in tqdm(args.batch_size, desc=f"Batch sizes (nprobe={nprobe})", position=1, leave=False):
-                for retrieved_docs in tqdm(args.retrieved_docs, desc=f"Retrieved Docs (nprobe={nprobe}, batch_size={batch_size})", position=2, leave=False):
-                    for num_threads in tqdm(args.num_threads, desc=f"Num Threads (nprobe={nprobe}, batch_size={batch_size}, retrieved_docs={retrieved_docs})", position=3, leave=False):
+            for batch_size in tqdm(batch_size_list, desc=f"Batch sizes (nprobe={nprobe})", position=1, leave=False):
+                for retrieved_docs in tqdm(retrieved_docs_list, desc=f"Retrieved Docs (nprobe={nprobe}, batch_size={batch_size})", position=2, leave=False):
+                    for num_threads in tqdm(num_threads_list, desc=f"Num Threads (nprobe={nprobe}, batch_size={batch_size}, retrieved_docs={retrieved_docs})", position=3, leave=False):
                         # Set the FAISS thread count
                         faiss.omp_set_num_threads(num_threads)
                         # Measure the average query time for the current combination
                         avg_query_time, retrieved_indices = perform_queries(
                             index, retrieved_docs, embeddings, batch_size, retrieved_dir
                         )
+                        setting_tag = f"nprobe{nprobe}_bs{batch_size}_k{retrieved_docs}_nt{num_threads}"
+                        np.save(os.path.join(retrieved_dir, f"retrieved_doc_indices__{setting_tag}.npy"), retrieved_indices)
+                        retrieved_texts_dict = {}
+                        for i, doc_ids in enumerate(retrieved_indices):
+                            texts = [dataset[int(doc_id)]["raw"] for doc_id in doc_ids]
+                            retrieved_texts_dict[str(i + 1)] = texts
+                        with open(os.path.join(retrieved_dir, f"retrieved_texts__{setting_tag}.json"), "w") as f:
+                            json.dump(retrieved_texts_dict, f, indent=2)
+
                         writer.writerow({
-                            "Index Name": args.index_name,
+                            "Index Name": index_name,
                             "nprobe": nprobe,
                             "Batch Size": batch_size,
                             "Retrieved Docs": retrieved_docs,
@@ -95,17 +110,38 @@ def main():
                         })
                         file.flush()  # Ensure data is written incrementally
 
-    dataset = load_from_disk(args.dataset_path)
-
-    retrieved_texts_dict = {}  # shape: (num_queries, top_k)
-    for i, doc_ids in enumerate(retrieved_indices):
-        texts = [dataset[int(doc_id)]["raw"] for doc_id in doc_ids]
-        retrieved_texts_dict[str(i + 1)] = texts
-
-    with open(os.path.join(retrieved_dir, "retrieved_texts.json"), "w") as f:
-        json.dump(retrieved_texts_dict, f, indent=2)  
 
     print(f"✅ Results saved to {profiling_dir, retrieved_dir}")
+
+    # Save config to retrieved_dir
+    config_dict = {
+        "index_name": index_name,
+        "nprobes": nprobe_list,
+        "batch_sizes": batch_size_list,
+        "retrieved_docs_list": retrieved_docs_list,
+        "num_threads_list": num_threads_list,
+        "query_embedding_path": query_embedding_path,
+        "dataset_path": dataset_path,
+        "output_dir": output_dir,
+    }
+    with open(os.path.join(retrieved_dir, "retrieval_config.json"), "w") as f:
+        json.dump(config_dict, f, indent=2)
+
+
+
+def main():
+    args = parse_arguments()
+
+    run_faiss_retrieval_benchmark(
+        index_name=args.index_name,
+        nprobe_list=args.nprobe,
+        batch_size_list=args.batch_size,
+        retrieved_docs_list=args.retrieved_docs,
+        num_threads_list=args.num_threads,
+        query_embedding_path=args.queries,
+        dataset_path=args.dataset_path,
+        output_dir=args.output_dir,
+    )
 
 if __name__ == "__main__":
     main()
