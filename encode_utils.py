@@ -132,14 +132,17 @@ def encode_dataset_questions(
         dataset = load_dataset(dataset, name=subset_name, split=split)
 
     if questions is None:
-        questions = dataset["question"]
+        questions = list(dataset["question"])
+        
 
     if model_type == "sentence_transformer":
         model = SentenceTransformer(model_name)
 
     elif model_type == "huggingface":
-        raise NotImplementedError(
-            "model_type='huggingface' is not yet supported in this function."
+        model = HuggingFaceEmbedder(model_name)
+    else:
+        raise ValueError(
+            f"Unsupported model type: {model_type}. Use 'sentence_transformer' or 'huggingface'."
         )
 
     embeddings = model.encode(
@@ -155,7 +158,7 @@ def encode_dataset_questions(
     rewriter_tag = "_rewritten" if rewriter_used else ""
     model_tag = model_name.split("/")[-1]
 
-    save_name = f"{subset_str}__{model_tag}{rewriter_tag}__{timestamp}.npy"
+    save_name = f"{subset_str}_{model_tag}{rewriter_tag}_{timestamp}.npy"
     os.makedirs(save_subdir, exist_ok=True)
     save_path = os.path.join(save_subdir, save_name)
     np.save(save_path, embeddings)
